@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"net"
 	"os"
@@ -35,10 +35,32 @@ func handlerConn(conn net.Conn) {
 }
 
 func request(conn net.Conn) string {
-	// とりあえずはcommand line引数でpathを指定する方式
-	buf := make([]byte, 4096)
-	n, _ := conn.Read(buf)
-	return string(buf[:n])
+	// command line引数でpathを指定する方式
+	// buf := make([]byte, 4096)
+	// n, _ := conn.Read(buf)
+	// return string(buf[:n])
+
+	// request
+	/*
+		1. GET以外はエラー
+	*/
+	scanner := bufio.NewScanner(conn)
+	i := 0
+	var path string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if i == 0 {
+			firstLine := strings.Fields(line)
+			// method := firstLine[0]
+			path = firstLine[1]
+			// proto = firstLine[2]
+		}
+		if line == "" {
+			break
+		}
+		i++
+	}
+	return path
 }
 
 func response(conn net.Conn, path string) {
@@ -47,17 +69,16 @@ func response(conn net.Conn, path string) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(path)
 	// 指定したパス以下のディレクトリ(複数)を取得
 	paths := dirWalk(path)
 	// htmlファイルを返す
 	for _, path := range paths {
 		if strings.Contains(path, "index.html") {
-			c, err := readFileContent(path)
+			c, err := getFileContent(path)
 			if err != nil {
 				panic(err)
 			}
-			io.WriteString(conn, string(c))
+			writeContent(conn, c)
 		}
 	}
 }
@@ -67,9 +88,18 @@ func getAbsPath(path string) (string, error) {
 	return pwd + path, err
 }
 
-func readFileContent(path string) ([]byte, error) {
+func getFileContent(path string) ([]byte, error) {
 	content, err := ioutil.ReadFile(path)
 	return content, err
+}
+
+func writeContent(conn net.Conn, content []byte) {
+	fmt.Fprint(conn, "HTTP/1.1 200 OK\r\n")
+	fmt.Fprintf(conn, "Content-Length: %d\r\n", len(content))
+	fmt.Fprint(conn, "Content-Type: text/html\r\n")
+	// fmt.Fprint(conn, "Connection: keep-alive\r\n")
+	fmt.Fprint(conn, "\r\n")
+	fmt.Fprint(conn, string(content))
 }
 
 func dirWalk(dir string) []string {
