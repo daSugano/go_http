@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -43,9 +44,7 @@ func request(conn net.Conn) string {
 		line := scanner.Text()
 		if i == 0 {
 			firstLine := strings.Fields(line)
-			// method := firstLine[0]
 			path = firstLine[1]
-			// proto = firstLine[2]
 		}
 		if line == "" {
 			break
@@ -62,22 +61,44 @@ func response(conn net.Conn, path string) {
 		panic(err)
 	}
 	// 指定したパス以下のディレクトリ(複数)を取得
-	paths := dirWalk(path)
+	paths, err := underDir(path)
+	if err != nil {
+		show404Page(conn)
+	}
 	// htmlファイルを返す
+	htmlExists := false
 	for _, path := range paths {
 		if strings.Contains(path, "index.html") {
 			c, err := getFileContent(path)
 			if err != nil {
 				panic(err)
 			}
-			writeContent(conn, c)
+			writeContent(conn, c, 200)
+			htmlExists = true
 		}
+	}
+	if !htmlExists {
+		show404Page(conn)
 	}
 }
 
 func getAbsPath(path string) (string, error) {
 	pwd, err := os.Getwd()
-	return pwd + path, err
+	if err != nil {
+		return "", err
+	}
+	err = preventTraversalAttack(path)
+	if err != nil {
+		return "", err
+	}
+	return pwd + path, nil
+}
+
+func preventTraversalAttack(path string) error {
+	if strings.Contains(path, "..") {
+		return errors.New("Directly Traversal Attack has been detected")
+	}
+	return nil
 }
 
 func getFileContent(path string) ([]byte, error) {
@@ -85,8 +106,8 @@ func getFileContent(path string) ([]byte, error) {
 	return content, err
 }
 
-func writeContent(conn net.Conn, content []byte) {
-	fmt.Fprint(conn, "HTTP/1.1 200 OK\r\n")
+func writeContent(conn net.Conn, content []byte, status_code int) {
+	fmt.Fprintf(conn, "HTTP/1.1 %v OK\r\n", status_code)
 	fmt.Fprintf(conn, "Content-Length: %d\r\n", len(content))
 	fmt.Fprint(conn, "Content-Type: text/html\r\n")
 	fmt.Fprint(conn, "Connection: keep-alive\r\n")
@@ -94,21 +115,25 @@ func writeContent(conn net.Conn, content []byte) {
 	fmt.Fprint(conn, string(content))
 }
 
-func dirWalk(dir string) []string {
-	files, err := ioutil.ReadDir(dir)
+func show404Page(conn net.Conn) {
+	c, err := getFileContent("error.html")
 	if err != nil {
 		panic(err)
+	}
+	writeContent(conn, c, 404)
+}
+
+func underDir(dir string) ([]string, error) {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return nil, err
 	}
 
 	var paths []string
 	for _, file := range files {
-		if file.IsDir() {
-			paths = append(paths, dirWalk(filepath.Join(dir, file.Name()))...)
-			continue
-		}
 		paths = append(paths, filepath.Join(dir, file.Name()))
 	}
-	return paths
+	return paths, nil
 }
 
 type Conn struct {
